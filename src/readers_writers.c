@@ -9,17 +9,20 @@
 
 #define _POSIX_C_SOURCE 200809L
 
-#define DEFAULT_PORT 123
+#define CANT_LECTORES 4
+#define CANT_ESCRITORES 2
 
 static volatile sig_atomic_t g_running = 1;
 
-static unsigned long g_requests_served = 0;
-
+static int readers;
+static sem_t mutex;
+static sem_t roomEmpty;
 
 typedef struct {
     int file_descriptor;
     unsigned long connection_id;
-} connection_t;
+} arg_hilo_t;
+
 
 static void on_sigint(int signum)
 {
@@ -27,104 +30,113 @@ static void on_sigint(int signum)
     g_running = 0;
 }
 
-
-static void *handle_connection(void *arg)
+static int install_signal_handlers(void)
 {
-    connection_t *conn = arg;
+    struct sigaction sa;
 
-    printf("[Handling connection %lu] accepted\n", conn->connection_id);
-    fflush(stdout);
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = on_sigint;
 
-    if (nu_drain_request(conn->file_descriptor) < 0)
+    if (sigaction(SIGINT, &sa, NULL) < 0)
     {
-        (void)nu_send_response(conn->file_descriptor, conn->connection_id);
+        perror("sigaction");
+        return -1;
     }
 
-    unsigned long current = g_requests_served;
-    sched_yield();
-    g_requests_served = current + 1;
+    return 0;
+}
 
-    if (close(conn->file_descriptor) < 0)
-        perror("close(file_descriptor)");
+static void *lector(void *arg)
+{
+    arg_hilo_t *hilo = arg;
 
-    free(conn);
+    while (g_running)
+    {
+        sem_wait(&mutex);
+        readers += 1;
+        
+        if (readers == 1)
+        {
+            sem_wait(&roomEmpty);
+        }
+        sem_post(&mutex);
+        
+        //Seccion critica lectores
+        printf("Lector %lu leyendo \n", hilo->connection_id);
+        sleep(2000);
+
+        sem_wait(&mutex);
+        readers -= 1;
+        if (readers == 0)
+        {
+            sem_post(&roomEmpty);
+        }
+        sem_post(&mutex);
+    }
     return NULL;
+}
 
+static void *escritor(void *arg)
+{
+    hilo_t *hilo = arg;    
+
+    while (g_running)
+    {
+        sem_wait(&roomEmpty);
+        printf("Escritor %lu escribiendo \n", hilo->connection_id);
+        sleep(2000);
+        sem_post(&roomEmpty);
+    }
+
+    return NULL;
 }
 
 int main(int argc, char **argv)
 {
+    pthread_t lectores[CANT_LECTORES];
+    arg_hilo_t args_lectores[CANT_LECTORES];
+
+    pthread_t escritores[CANT_ESCRITORES];
+    arg_hilo_t args_escritores[CANT_ESCRITORES];   
+    
     if (install_signal_handlers() < 0)
     {
         return EXIT_FAILURE;
     }
-    unsigned short port = parse_port(argc, argv);
 
-    int listen_file_descriptor = nu_listen(port, LISTEN_BACKLOG);
+    printf("Readers-writers %u — Ctrl-C to stop\n", port);
 
-    if (listen_file_descriptor < 0)
-    {
-        return EXIT_FAILURE;
-    }
-
-    printf("listening on port %u — Ctrl-C to stop\n", port);
-    fflush(stdout);
-
-    unsigned long accepted = 0;
-
-    while (g_running)
-    {
-        int client_file_descriptor = accept(listen_file_descriptor, NULL, NULL);
-        if (client_file_descriptor < 0)
-        {
-            if (errno == EINTR)
-            {
-                continue;
-            }
-            perror("accept");
-            break;
-        }
-        connection_t *conn = malloc(sizeof(connection_t));
-
-        if (conn == NULL)
-        {
-            fprintf(stderr, "out of memory, dropping connection\n");
-            close(client_file_descriptor);
-            continue;
-        }
-
-        conn->file_descriptor = client_file_descriptor;
-        conn->connection_id = ++accepted;
-
-        pthread_t thread_id;
-
-        int pthread_created = pthread_create(&thread_id, NULL, handle_connection, conn);
+    for (long i = 0; i < CANT_ESCRITORES; i++){
+        int pthread_created = pthread_create(&escritores[i], NULL, escritor, NULL); 
 
         if (pthread_created != 0)
         {
             fprintf(stderr, "pthread_create failed %s\n", strerror(pthread_created));
-            close(client_file_descriptor);
-            free(conn);
-            --accepted;
-            continue;
+            return EXIT_FAILURE;
         }
-        pthread_created = pthread_detach(thread_id);
+    }
+
+    for (long i = 0; i < CANT_LECTORES; i++){
+        int pthread_created = pthread_create(&lectores[i], NULL, lector, NULL); 
+
         if (pthread_created != 0)
         {
-            fprintf(stderr, "pthread_detach failed %s\n", strerror(pthread_created));
+            fprintf(stderr, "pthread_create failed %s\n", strerror(pthread_created));
+            return EXIT_FAILURE;
         }
-
     }
 
-    if (close(listen_file_descriptor))
-    {
-        perror("close(listen_file_descriptor)");
+    for (long i = 0; i < CANT_ESCRITORES; i++){
+        int rc = pthread_join(escritores[i], NULL);
+        if (rc != 0)
+            fprintf(stderr, "pthread_join: %s\n", strerror(rc));
+    }
+    for (long i = 0; i < CANT_LECTORES; i++){
+        int rc = pthread_join(lectores[i], NULL);
+        if (rc != 0)
+            fprintf(stderr, "pthread_join: %s\n", strerror(rc));
     }
 
-
-    printf("\naccepted: %lu\n", accepted);
-    printf("served:   %lu\n", g_requests_served);
-    printf("lost:     %ld\n", (long)accepted - (long)g_requests_served);
 
     return EXIT_SUCCESS;
 }
