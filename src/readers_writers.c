@@ -1,6 +1,5 @@
 #include <errno.h>
 #include <pthread.h>
-#include <sched.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,8 +7,7 @@
 #include <unistd.h>
 #include <semaphore.h>
 
-
-#define _POSIX_C_SOURCE 200809L
+//#define _POSIX_C_SOURCE 200809L
 
 #define CANT_LECTORES 4
 #define CANT_ESCRITORES 2
@@ -67,6 +65,7 @@ static void *lector(void *arg)
         fflush(stdout);
         sleep(2);
         printf("Lector %d termina de leer \n", hilo->id);
+        fflush(stdout);
 
         sem_wait(&mutex);
         readers -= 1;
@@ -75,6 +74,7 @@ static void *lector(void *arg)
             sem_post(&roomEmpty);
         }
         sem_post(&mutex);
+        sleep(1);
     }
     return NULL;
 }
@@ -92,6 +92,7 @@ static void *escritor(void *arg)
         printf("Escritor %d termina de escribir \n", hilo->id);
         fflush(stdout);
         sem_post(&roomEmpty);
+        sleep(1);
     }
 
     return NULL;
@@ -115,7 +116,7 @@ int main(void)
 
     printf("Readers-writers — Ctrl-C to stop\n");
 
-    for (long i = 0; i < CANT_ESCRITORES; i++){
+    for (int i = 0; i < CANT_ESCRITORES; i++){
         args_escritores[i].id = i;
         int pthread_created = pthread_create(&escritores[i], NULL, escritor, &args_escritores[i]); 
 
@@ -126,8 +127,9 @@ int main(void)
         }
     }
 
-    for (long i = 0; i < CANT_LECTORES; i++){
-        int pthread_created = pthread_create(&lectores[i], NULL, lector, NULL); 
+    for (int i = 0; i < CANT_LECTORES; i++){
+        args_lectores[i].id = i;
+        int pthread_created = pthread_create(&lectores[i], NULL, lector, &args_lectores[i]); 
 
         if (pthread_created != 0)
         {
@@ -136,12 +138,12 @@ int main(void)
         }
     }
 
-    for (long i = 0; i < CANT_ESCRITORES; i++){
+    for (int i = 0; i < CANT_ESCRITORES; i++){
         int rc = pthread_join(escritores[i], NULL);
         if (rc != 0)
             fprintf(stderr, "pthread_join: %s\n", strerror(rc));
     }
-    for (long i = 0; i < CANT_LECTORES; i++){
+    for (int i = 0; i < CANT_LECTORES; i++){
         int rc = pthread_join(lectores[i], NULL);
         if (rc != 0)
             fprintf(stderr, "pthread_join: %s\n", strerror(rc));
