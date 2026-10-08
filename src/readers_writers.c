@@ -17,6 +17,7 @@ static volatile sig_atomic_t g_running = 1;
 static int readers;
 static sem_t mutex;
 static sem_t roomEmpty;
+static sem_t turnstile;
 
 typedef struct {
     int id;
@@ -51,6 +52,9 @@ static void *lector(void *arg)
 
     while (g_running)
     {
+        sem_wait(&turnstile);
+        sem_post(&turnstile);
+
         sem_wait(&mutex);
         readers += 1;
         
@@ -85,12 +89,14 @@ static void *escritor(void *arg)
 
     while (g_running)
     {
+        sem_wait(&turnstile);
         sem_wait(&roomEmpty);
         printf("Escritor %d escribiendo \n", hilo->id);
         fflush(stdout);
         sleep(2);
         printf("Escritor %d termina de escribir \n", hilo->id);
         fflush(stdout);
+        sem_post(&turnstile);
         sem_post(&roomEmpty);
         sleep(1);
     }
@@ -102,7 +108,8 @@ int main(void)
 {
     sem_init(&mutex,0,1);
     sem_init(&roomEmpty,0,1);
-
+    sem_init(&turnstile,0,1);
+    
     pthread_t lectores[CANT_LECTORES];
     arg_hilo_t args_lectores[CANT_LECTORES];
 
@@ -151,6 +158,8 @@ int main(void)
 
     sem_destroy(&mutex);
     sem_destroy(&roomEmpty);
+    sem_destroy(&turnstile);
+
 
     return EXIT_SUCCESS;
 }
