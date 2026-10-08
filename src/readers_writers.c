@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <semaphore.h>
+
 
 #define _POSIX_C_SOURCE 200809L
 
@@ -19,8 +21,7 @@ static sem_t mutex;
 static sem_t roomEmpty;
 
 typedef struct {
-    int file_descriptor;
-    unsigned long connection_id;
+    int id;
 } arg_hilo_t;
 
 
@@ -60,10 +61,12 @@ static void *lector(void *arg)
             sem_wait(&roomEmpty);
         }
         sem_post(&mutex);
-        
+
         //Seccion critica lectores
-        printf("Lector %lu leyendo \n", hilo->connection_id);
-        sleep(2000);
+        printf("Lector %d leyendo \n", hilo->id);
+        fflush(stdout);
+        sleep(2);
+        printf("Lector %d termina de leer \n", hilo->id);
 
         sem_wait(&mutex);
         readers -= 1;
@@ -78,21 +81,27 @@ static void *lector(void *arg)
 
 static void *escritor(void *arg)
 {
-    hilo_t *hilo = arg;    
+    arg_hilo_t *hilo = arg;    
 
     while (g_running)
     {
         sem_wait(&roomEmpty);
-        printf("Escritor %lu escribiendo \n", hilo->connection_id);
-        sleep(2000);
+        printf("Escritor %d escribiendo \n", hilo->id);
+        fflush(stdout);
+        sleep(2);
+        printf("Escritor %d termina de escribir \n", hilo->id);
+        fflush(stdout);
         sem_post(&roomEmpty);
     }
 
     return NULL;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
+    sem_init(&mutex,0,1);
+    sem_init(&roomEmpty,0,1);
+
     pthread_t lectores[CANT_LECTORES];
     arg_hilo_t args_lectores[CANT_LECTORES];
 
@@ -104,10 +113,11 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    printf("Readers-writers %u — Ctrl-C to stop\n", port);
+    printf("Readers-writers — Ctrl-C to stop\n");
 
     for (long i = 0; i < CANT_ESCRITORES; i++){
-        int pthread_created = pthread_create(&escritores[i], NULL, escritor, NULL); 
+        args_escritores[i].id = i;
+        int pthread_created = pthread_create(&escritores[i], NULL, escritor, &args_escritores[i]); 
 
         if (pthread_created != 0)
         {
@@ -137,6 +147,8 @@ int main(int argc, char **argv)
             fprintf(stderr, "pthread_join: %s\n", strerror(rc));
     }
 
+    sem_destroy(&mutex);
+    sem_destroy(&roomEmpty);
 
     return EXIT_SUCCESS;
 }
